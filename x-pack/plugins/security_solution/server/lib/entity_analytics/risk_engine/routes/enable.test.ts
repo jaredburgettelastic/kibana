@@ -15,6 +15,7 @@ import {
 } from '../../../detection_engine/routes/__mocks__';
 import { riskEngineDataClientMock } from '../risk_engine_data_client.mock';
 import { riskEnginePrivilegesMock } from './risk_engine_privileges.mock';
+import type { SavedObjectsUpdateResponse } from '@kbn/core/server';
 
 describe('risk score enable route', () => {
   let server: ReturnType<typeof serverMock.create>;
@@ -66,8 +67,9 @@ describe('risk score enable route', () => {
     });
 
     it('returns a 200 when enablement is successful', async () => {
-      // @ts-expect-error response is not used in the route nor this test
-      mockRiskEngineDataClient.enableRiskEngine.mockResolvedValue({ enabled: true });
+      mockRiskEngineDataClient.enableRiskEngine.mockResolvedValue({
+        enabled: true,
+      } as unknown as SavedObjectsUpdateResponse);
       const request = buildRequest();
       const response = await server.inject(request, context);
 

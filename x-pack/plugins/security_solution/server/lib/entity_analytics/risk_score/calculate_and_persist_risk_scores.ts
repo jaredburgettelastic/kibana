@@ -17,21 +17,20 @@ export const calculateAndPersistRiskScores = async (
     assetCriticalityService: AssetCriticalityService;
     esClient: ElasticsearchClient;
     logger: Logger;
-    spaceId: string;
     riskScoreDataClient: RiskScoreDataClient;
   }
 ): Promise<CalculateAndPersistScoresResponse> => {
-  const { riskScoreDataClient, spaceId, ...rest } = params;
-  const writer = await riskScoreDataClient.getWriter({
-    namespace: spaceId,
-  });
-  const { after_keys: afterKeys, scores } = await calculateRiskScores(rest);
+  const { riskScoreDataClient } = params;
+
+  await riskScoreDataClient.upgrade();
+
+  const { after_keys: afterKeys, scores } = await calculateRiskScores(params);
 
   if (!scores.host?.length && !scores.user?.length) {
     return { after_keys: {}, errors: [], scores_written: 0 };
   }
 
-  const { errors, docs_written: scoresWritten } = await writer.bulk(scores);
+  const { errors, docs_written: scoresWritten } = await riskScoreDataClient.writer.bulk(scores);
 
   return { after_keys: afterKeys, errors, scores_written: scoresWritten };
 };

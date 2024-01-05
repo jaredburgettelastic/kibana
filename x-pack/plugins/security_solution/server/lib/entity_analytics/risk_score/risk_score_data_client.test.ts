@@ -22,6 +22,8 @@ import { createDataStream } from '../utils/create_datastream';
 import * as transforms from '../utils/transforms';
 import { createOrUpdateIndex } from '../utils/create_or_update_index';
 
+import { times } from 'lodash';
+
 jest.mock('@kbn/alerting-plugin/server', () => ({
   createOrUpdateComponentTemplate: jest.fn(),
   createOrUpdateIndexTemplate: jest.fn(),
@@ -62,20 +64,10 @@ describe('RiskScoreDataClient', () => {
     jest.clearAllMocks();
   });
 
-  describe('getWriter', () => {
-    it('should return a writer object', async () => {
-      const writer = await riskScoreDataClient.getWriter({ namespace: 'default' });
-      expect(writer).toBeDefined();
-      expect(typeof writer?.bulk).toBe('function');
-    });
-
-    it('should cache and return the same writer for the same namespace', async () => {
-      const writer1 = await riskScoreDataClient.getWriter({ namespace: 'default' });
-      const writer2 = await riskScoreDataClient.getWriter({ namespace: 'default' });
-      const writer3 = await riskScoreDataClient.getWriter({ namespace: 'space-1' });
-
-      expect(writer1).toEqual(writer2);
-      expect(writer2).not.toEqual(writer3);
+  describe(`data client's writer`, () => {
+    it('should be a writer object', async () => {
+      expect(riskScoreDataClient.writer).toBeDefined();
+      expect(typeof riskScoreDataClient.writer.bulk).toBe('function');
     });
   });
 
@@ -282,7 +274,7 @@ describe('RiskScoreDataClient', () => {
         options: {
           index: `risk-score.risk-score-latest-default`,
           mappings: {
-            dynamic: 'strict',
+            dynamic: false,
             properties: {
               '@timestamp': {
                 ignore_malformed: false,
@@ -440,7 +432,7 @@ describe('RiskScoreDataClient', () => {
 
   describe('init error', () => {
     it('should handle errors during initialization', async () => {
-      const error = new Error('There error');
+      const error = new Error('There was an error');
       (createOrUpdateIndexTemplate as jest.Mock).mockRejectedValueOnce(error);
 
       try {
@@ -452,4 +444,38 @@ describe('RiskScoreDataClient', () => {
       }
     });
   });
+
+  describe('upgrade process', () => {
+    beforeEach(() => {
+      jest.spyOn(riskScoreDataClient, 'upgrade');
+      spyOnPrivateMethod(riskScoreDataClient, 'upsertRiskScoreLatestIndex');
+    });
+    it('upserts the configuration for the latest risk score index when upgrading', async () => {
+      await riskScoreDataClient.upgrade();
+
+      expect(
+        getPrivateMethod(riskScoreDataClient, 'upsertRiskScoreLatestIndex')
+      ).toHaveBeenCalled();
+    });
+    it('upserts the configuration for the latest risk score index only a single time, no matter how many times upgrade is called', async () => {
+      await Promise.all(
+        times(3, () => {
+          return riskScoreDataClient.upgrade();
+        })
+      );
+      expect(
+        getPrivateMethod(riskScoreDataClient, 'upsertRiskScoreLatestIndex')
+      ).toHaveBeenCalledTimes(1);
+    });
+  });
 });
+
+const getPrivateMethod = (target: unknown, method: string) => {
+  // @ts-expect-error intentionally retrieve a method, despite its visibility
+  return target[method];
+};
+
+const spyOnPrivateMethod = (target: unknown, method: string) => {
+  // @ts-expect-error intentionally allow spying on a method, despite its visibility
+  jest.spyOn(target, method);
+};

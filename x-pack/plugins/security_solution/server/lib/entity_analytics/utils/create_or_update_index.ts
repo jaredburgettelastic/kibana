@@ -13,8 +13,7 @@ import type {
 import { retryTransientEsErrors } from './retry_transient_es_errors';
 
 /**
- * It's check for index existatnce, and create index
- * or update existing index mappings
+ * Checks for the index's existence, and creates the index or updates the existing index mappings
  */
 export const createOrUpdateIndex = async ({
   esClient,
@@ -34,7 +33,7 @@ export const createOrUpdateIndex = async ({
         index: options.index,
       });
       const indices = Object.keys(response ?? {});
-      logger.info(`${options.index} already exist`);
+      logger.info(`${options.index} already exists`);
       if (options.mappings) {
         await Promise.all(
           indices.map(async (index) => {

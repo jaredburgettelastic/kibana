@@ -20,10 +20,6 @@ interface BulkParams {
   user?: RiskScore[];
 }
 
-export interface RiskEngineDataWriter {
-  bulk: (params: BulkParams) => Promise<WriterBulkResponse>;
-}
-
 interface RiskEngineDataWriterOptions {
   esClient: ElasticsearchClient;
   index: string;
@@ -31,10 +27,10 @@ interface RiskEngineDataWriterOptions {
   logger: Logger;
 }
 
-export class RiskEngineDataWriter implements RiskEngineDataWriter {
+export class RiskEngineDataWriter {
   constructor(private readonly options: RiskEngineDataWriterOptions) {}
 
-  public bulk = async (params: BulkParams) => {
+  public bulk = async (params: BulkParams): Promise<WriterBulkResponse> => {
     try {
       if (!params.host?.length && !params.user?.length) {
         return { errors: [], docs_written: 0, took: 0 };

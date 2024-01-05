@@ -7,47 +7,53 @@
 
 import { isRiskScoreCalculationComplete } from './helpers';
 
+const emptyResult = {
+  after_keys: {},
+  errors: [],
+  scores_written: 0,
+};
+
 describe('isRiskScoreCalculationComplete', () => {
   it('is true if both after_keys.host and after_keys.user are empty', () => {
     const result = {
+      ...emptyResult,
       after_keys: {
         host: {},
         user: {},
       },
     };
-    // @ts-expect-error using a minimal result object for testing
     expect(isRiskScoreCalculationComplete(result)).toEqual(true);
   });
 
   it('is true if after_keys is an empty object', () => {
     const result = {
+      ...emptyResult,
       after_keys: {},
     };
-    // @ts-expect-error using a minimal result object for testing
     expect(isRiskScoreCalculationComplete(result)).toEqual(true);
   });
 
   it('is false if the host key has a key/value', () => {
     const result = {
+      ...emptyResult,
       after_keys: {
         host: {
           key: 'value',
         },
       },
     };
-    // @ts-expect-error using a minimal result object for testing
     expect(isRiskScoreCalculationComplete(result)).toEqual(false);
   });
 
   it('is false if the user key has a key/value', () => {
     const result = {
+      ...emptyResult,
       after_keys: {
         user: {
           key: 'value',
         },
       },
     };
-    // @ts-expect-error using a minimal result object for testing
     expect(isRiskScoreCalculationComplete(result)).toEqual(false);
   });
 });

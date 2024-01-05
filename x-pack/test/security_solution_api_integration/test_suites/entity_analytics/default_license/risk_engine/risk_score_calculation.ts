@@ -26,6 +26,7 @@ import {
   assetCriticalityRouteHelpersFactory,
   cleanAssetCriticality,
   waitForAssetCriticalityToBePresent,
+  getLatestRiskScoreIndexDynamicConfiguration,
 } from '../../utils';
 import { FtrProviderContext } from '../../../../ftr_provider_context';
 
@@ -137,6 +138,29 @@ export default ({ getService }: FtrProviderContext): void => {
           score.calculated_score_norm! - 0.000000000000001,
           score.calculated_score_norm! + 0.000000000000001
         );
+      });
+
+      it('upgrades latest risk score index dynamic before persisting risk scores', async () => {
+        const documentId = uuidv4();
+        await indexListOfDocuments([buildDocument({ host: { name: 'host-1' } }, documentId)]);
+
+        await calculateRiskScoreAfterRuleCreationAndExecution(documentId);
+
+        // by default, the dynamic mapping is set to false.
+        expect(await getLatestRiskScoreIndexDynamicConfiguration(es)).to.eql('false');
+
+        // set the 'dynamic' configuration to an undesirable value
+        await es.indices.putMapping({
+          index: 'risk-score.risk-score-latest-default',
+          dynamic: 'strict',
+        });
+
+        expect(await getLatestRiskScoreIndexDynamicConfiguration(es)).to.eql('strict');
+
+        // before re-running risk score persistence, the dynamic configuration should be reset to the desired value
+        await calculateRiskScoreAfterRuleCreationAndExecution(documentId);
+
+        expect(await getLatestRiskScoreIndexDynamicConfiguration(es)).to.eql('false');
       });
 
       describe('paging through calculations', () => {

@@ -8,7 +8,7 @@ import type { FieldMap } from '@kbn/alerts-as-data-utils';
 import type { IdentifierType } from '../../../../common/entity_analytics/risk_engine';
 import {
   RiskScoreEntity,
-  riskScoreBaseIndexName,
+  getRiskScoreTimeSeriesIndex,
 } from '../../../../common/entity_analytics/risk_engine';
 import type { IIndexPatternString } from '../utils/create_datastream';
 
@@ -131,8 +131,8 @@ export const mappingComponentName = '.risk-score-mappings';
 export const totalFieldsLimit = 1000;
 
 export const getIndexPatternDataStream = (namespace: string): IIndexPatternString => ({
-  template: `.${riskScoreBaseIndexName}.${riskScoreBaseIndexName}-${namespace}-index-template`,
-  alias: `${riskScoreBaseIndexName}.${riskScoreBaseIndexName}-${namespace}`,
+  template: `.${getRiskScoreTimeSeriesIndex(namespace)}-index-template`,
+  alias: getRiskScoreTimeSeriesIndex(namespace),
 });
 
 export const getTransformOptions = ({ dest, source }: { dest: string; source: string[] }) => ({

@@ -12,25 +12,25 @@ import {
   createOrUpdateIndexTemplate,
 } from '@kbn/alerting-plugin/server';
 import { mappingFromFieldMap } from '@kbn/alerting-plugin/common';
-import type { Logger, ElasticsearchClient, SavedObjectsClientContract } from '@kbn/core/server';
+import type { ElasticsearchClient, Logger, SavedObjectsClientContract } from '@kbn/core/server';
 
 import {
-  riskScoreFieldMap,
   getIndexPatternDataStream,
-  totalFieldsLimit,
-  mappingComponentName,
   getTransformOptions,
+  mappingComponentName,
+  riskScoreFieldMap,
+  totalFieldsLimit,
 } from './configurations';
+import type { IIndexPatternString } from '../utils/create_datastream';
 import { createDataStream } from '../utils/create_datastream';
-import type { RiskEngineDataWriter as Writer } from './risk_engine_data_writer';
 import { RiskEngineDataWriter } from './risk_engine_data_writer';
 import { getRiskScoreLatestIndex } from '../../../../common/entity_analytics/risk_engine';
-import { getLatestTransformId, createTransform } from '../utils/transforms';
+import { createTransform, getLatestTransformId } from '../utils/transforms';
 import { getRiskInputsIndex } from './get_risk_inputs_index';
 
 import { createOrUpdateIndex } from '../utils/create_or_update_index';
 
-interface RiskScoringDataClientOpts {
+interface RiskScoreDataClientOpts {
   logger: Logger;
   kibanaVersion: string;
   esClient: ElasticsearchClient;
@@ -39,28 +39,18 @@ interface RiskScoringDataClientOpts {
 }
 
 export class RiskScoreDataClient {
-  private writerCache: Map<string, Writer> = new Map();
-  constructor(private readonly options: RiskScoringDataClientOpts) {}
+  private alreadyUpgraded = false;
+  public writer: RiskEngineDataWriter;
+  private readonly indexPatterns: IIndexPatternString;
 
-  public async getWriter({ namespace }: { namespace: string }): Promise<Writer> {
-    if (this.writerCache.get(namespace)) {
-      return this.writerCache.get(namespace) as Writer;
-    }
-    const indexPatterns = getIndexPatternDataStream(namespace);
-    await this.initializeWriter(namespace, indexPatterns.alias);
-    return this.writerCache.get(namespace) as Writer;
-  }
-
-  private async initializeWriter(namespace: string, index: string): Promise<Writer> {
-    const writer = new RiskEngineDataWriter({
+  constructor(private readonly options: RiskScoreDataClientOpts) {
+    this.indexPatterns = getIndexPatternDataStream(options.namespace);
+    this.writer = new RiskEngineDataWriter({
       esClient: this.options.esClient,
-      namespace,
-      index,
+      namespace: options.namespace,
+      index: this.indexPatterns.alias,
       logger: this.options.logger,
     });
-
-    this.writerCache.set(namespace, writer);
-    return writer;
   }
 
   public getRiskInputsIndex = ({ dataViewId }: { dataViewId: string }) =>
@@ -71,93 +61,114 @@ export class RiskScoreDataClient {
     });
 
   public async init() {
-    const namespace = this.options.namespace;
-
     try {
-      const esClient = this.options.esClient;
-
-      const indexPatterns = getIndexPatternDataStream(namespace);
-
-      const indexMetadata: Metadata = {
-        kibana: {
-          version: this.options.kibanaVersion,
-        },
-        managed: true,
-        namespace,
-      };
-
-      await Promise.all([
-        createOrUpdateComponentTemplate({
-          logger: this.options.logger,
-          esClient,
-          template: {
-            name: mappingComponentName,
-            _meta: {
-              managed: true,
-            },
-            template: {
-              settings: {},
-              mappings: mappingFromFieldMap(riskScoreFieldMap, 'strict'),
-            },
-          } as ClusterPutComponentTemplateRequest,
-          totalFieldsLimit,
-        }),
-      ]);
-
-      await createOrUpdateIndexTemplate({
-        logger: this.options.logger,
-        esClient,
-        template: {
-          name: indexPatterns.template,
-          body: {
-            data_stream: { hidden: true },
-            index_patterns: [indexPatterns.alias],
-            composed_of: [mappingComponentName],
-            template: {
-              lifecycle: {},
-              settings: {
-                'index.mapping.total_fields.limit': totalFieldsLimit,
-              },
-              mappings: {
-                dynamic: false,
-                _meta: indexMetadata,
-              },
-            },
-            _meta: indexMetadata,
-          },
-        },
-      });
-
-      await createDataStream({
-        logger: this.options.logger,
-        esClient,
-        totalFieldsLimit,
-        indexPatterns,
-      });
-
-      await createOrUpdateIndex({
-        esClient,
-        logger: this.options.logger,
-        options: {
-          index: getRiskScoreLatestIndex(namespace),
-          mappings: mappingFromFieldMap(riskScoreFieldMap, 'strict'),
-        },
-      });
-
-      const transformId = getLatestTransformId(namespace);
-      await createTransform({
-        esClient,
-        logger: this.options.logger,
-        transform: {
-          transform_id: transformId,
-          ...getTransformOptions({
-            dest: getRiskScoreLatestIndex(namespace),
-            source: [indexPatterns.alias],
-          }),
-        },
-      });
+      await this.upsertRiskScoreDataStream();
+      await this.upsertRiskScoreLatestIndex();
+      await this.upsertRiskScoreLatestIndexTransform();
     } catch (error) {
       this.options.logger.error(`Error initializing risk engine resources: ${error.message}`);
+      throw error;
+    }
+  }
+
+  protected async upsertRiskScoreDataStream() {
+    await createOrUpdateComponentTemplate({
+      logger: this.options.logger,
+      esClient: this.options.esClient,
+      template: {
+        name: mappingComponentName,
+        _meta: {
+          managed: true,
+        },
+        template: {
+          settings: {},
+          mappings: mappingFromFieldMap(riskScoreFieldMap, 'strict'),
+        },
+      } as ClusterPutComponentTemplateRequest,
+      totalFieldsLimit,
+    });
+
+    const indexMetadata: Metadata = {
+      kibana: {
+        version: this.options.kibanaVersion,
+      },
+      managed: true,
+      namespace: this.options.namespace,
+    };
+
+    await createOrUpdateIndexTemplate({
+      logger: this.options.logger,
+      esClient: this.options.esClient,
+      template: {
+        name: this.indexPatterns.template,
+        body: {
+          data_stream: { hidden: true },
+          index_patterns: [this.indexPatterns.alias],
+          composed_of: [mappingComponentName],
+          template: {
+            lifecycle: {},
+            settings: {
+              'index.mapping.total_fields.limit': totalFieldsLimit,
+            },
+            mappings: {
+              dynamic: false,
+              _meta: indexMetadata,
+            },
+          },
+          _meta: indexMetadata,
+        },
+      },
+    });
+
+    await createDataStream({
+      logger: this.options.logger,
+      esClient: this.options.esClient,
+      totalFieldsLimit,
+      indexPatterns: this.indexPatterns,
+    });
+  }
+
+  protected async upsertRiskScoreLatestIndex() {
+    await createOrUpdateIndex({
+      esClient: this.options.esClient,
+      logger: this.options.logger,
+      options: {
+        index: getRiskScoreLatestIndex(this.options.namespace),
+        mappings: mappingFromFieldMap(riskScoreFieldMap, false),
+      },
+    });
+  }
+
+  protected async upsertRiskScoreLatestIndexTransform() {
+    await createTransform({
+      esClient: this.options.esClient,
+      logger: this.options.logger,
+      transform: {
+        transform_id: getLatestTransformId(this.options.namespace),
+        ...getTransformOptions({
+          dest: getRiskScoreLatestIndex(this.options.namespace),
+          source: [this.indexPatterns.alias],
+        }),
+      },
+    });
+  }
+
+  /**
+   * Ensures that configuration migrations are seamlessly handled across Kibana upgrades.
+   * This function is meant to be idempotent. However, to reduce unnecessary processing, it will only execute once
+   * across the lifecycle of a {@link RiskScoreDataClient} instance (which is scoped to a single namespace).
+   */
+  public async upgrade() {
+    try {
+      if (this.alreadyUpgraded) {
+        return;
+      }
+      this.alreadyUpgraded = true;
+      // Migrating to 8.12+ requires a change to the risk score latest transform index's 'dynamic' setting
+      await this.upsertRiskScoreLatestIndex();
+    } catch (error) {
+      this.options.logger.error(`Error upgrading risk engine resources: ${error.message}`);
+      this.alreadyUpgraded = false;
       throw error;
     }
   }

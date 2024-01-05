@@ -57,7 +57,6 @@ export const riskScoreServiceFactory = ({
       esClient,
       logger,
       riskScoreDataClient,
-      spaceId,
     }),
   getConfiguration: async () => riskEngineDataClient.getConfiguration(),
   getRiskInputsIndex: async (params) => riskScoreDataClient.getRiskInputsIndex(params),

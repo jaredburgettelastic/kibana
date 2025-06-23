@@ -33,11 +33,13 @@ import { useIsExperimentalFeatureEnabled } from '../../common/hooks/use_experime
 import { useSourcererDataView } from '../../sourcerer/containers';
 import { HeaderPage } from '../../common/components/header_page';
 import { useEntityAnalyticsRoutes } from '../api/api';
+import { PrivilegedUserMonitoringManageDataSources } from '../components/privileged_user_monitoring_manage_data_sources';
 
 type PageState =
   | { type: 'onboarding' }
   | { type: 'initializingEngine'; initResponse?: InitMonitoringEngineResponse; userCount: number }
-  | { type: 'dashboard'; onboardingCallout?: OnboardingCallout };
+  | { type: 'dashboard'; onboardingCallout?: OnboardingCallout }
+  | { type: 'manageDataSources' };
 
 type Action =
   | { type: 'INITIALIZING_ENGINE'; userCount: number; initResponse?: InitMonitoringEngineResponse }
@@ -45,7 +47,8 @@ type Action =
   | {
       type: 'SHOW_DASHBOARD';
       onboardingCallout?: OnboardingCallout;
-    };
+    }
+  | { type: 'SHOW_MANAGE_DATA_SOURCES' };
 
 const initialState: PageState = { type: 'onboarding' };
 
@@ -67,6 +70,8 @@ function reducer(state: PageState, action: Action): PageState {
         };
       }
       return state;
+    case 'SHOW_MANAGE_DATA_SOURCES':
+      return { type: 'manageDataSources' };
     default:
       return state;
   }
@@ -99,7 +104,13 @@ export const EntityAnalyticsPrivilegedUserMonitoringPage = () => {
     [initPrivilegedMonitoringEngine]
   );
 
-  const onManageUserClicked = useCallback(() => {}, []);
+  const onManageUserClicked = useCallback(() => {
+    dispatch({ type: 'SHOW_MANAGE_DATA_SOURCES' });
+  }, []);
+
+  const onBackToDashboardClicked = useCallback(() => {
+    dispatch({ type: 'SHOW_DASHBOARD' });
+  }, []);
 
   return (
     <>
@@ -206,7 +217,7 @@ export const EntityAnalyticsPrivilegedUserMonitoringPage = () => {
                 <EuiButtonEmpty onClick={onManageUserClicked} iconType="gear" color="primary">
                   <FormattedMessage
                     id="xpack.securitySolution.entityAnalytics.privilegedUserMonitoring.dashboards.manageUsersButton"
-                    defaultMessage="Manage users"
+                    defaultMessage="Manage data sources"
                   />
                 </EuiButtonEmpty>,
               ]}
@@ -216,6 +227,12 @@ export const EntityAnalyticsPrivilegedUserMonitoringPage = () => {
               onManageUserClicked={onManageUserClicked}
             />
           </>
+        )}
+
+        {state.type === 'manageDataSources' && (
+          <PrivilegedUserMonitoringManageDataSources
+            onBackToDashboardClicked={onBackToDashboardClicked}
+          />
         )}
 
         <SpyRoute pageName={SecurityPageName.entityAnalyticsPrivilegedUserMonitoring} />

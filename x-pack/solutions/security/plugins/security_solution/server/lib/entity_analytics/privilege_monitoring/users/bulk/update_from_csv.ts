@@ -51,10 +51,16 @@ export const bulkBatchUpsertFromCSV =
         const labels = {
           sources: ['csv'],
         };
+        const timestamp = new Date().toISOString();
+        const timestamps = {
+          '@timestamp': timestamp,
+          event: { ingested: timestamp },
+        };
         if (!id) {
           return [
             { create: {} },
             {
+              ...timestamps,
               user: { name: row.username, is_privileged: true },
               labels,
             },
@@ -65,6 +71,7 @@ export const bulkBatchUpsertFromCSV =
           { update: { _id: id } },
           {
             doc: {
+              ...timestamps,
               user: { name: row.username },
               labels,
             },

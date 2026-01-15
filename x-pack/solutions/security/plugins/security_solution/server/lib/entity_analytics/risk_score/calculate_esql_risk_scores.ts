@@ -16,9 +16,12 @@ import {
 } from '@kbn/rule-registry-plugin/common/technical_rule_data_field_names';
 import { toEntries } from 'fp-ts/Record';
 
-import { EntityTypeToIdentifierField } from '../../../../common/entity_analytics/types';
+import {
+  EntityTypeToIdentifierField,
+  EntityTypeToEntityIdField,
+  EntityType,
+} from '../../../../common/entity_analytics/types';
 import { getEntityAnalyticsEntityTypes } from '../../../../common/entity_analytics/utils';
-import type { EntityType } from '../../../../common/search_strategy';
 import type { ExperimentalFeatures } from '../../../../common';
 
 import type {
@@ -35,6 +38,81 @@ import { RIEMANN_ZETA_S_VALUE, RIEMANN_ZETA_VALUE } from './constants';
 import { filterFromRange } from './helpers';
 import { applyScoreModifiers } from './apply_score_modifiers';
 import type { PrivmonUserCrudService } from '../privilege_monitoring/users/privileged_users_crud';
+
+/**
+ * Generates an ES|QL EVAL clause that computes a unique entity identifier (EUID).
+ * The EUID calculation uses a priority-based COALESCE approach to determine the most
+ * reliable identifier for each entity type.
+ *
+ * For users: Uses user.entity.id, user.id, user.email, or a combination of user.name
+ * with domain/host context, falling back to user.name.
+ *
+ * For hosts: Uses host.entity.id, host.id, or a combination of host.name/hostname
+ * with domain/mac context, falling back to host.name or host.hostname.
+ */
+export const generateEUID = (entityType: EntityType): string => {
+  if (entityType === EntityType.user) {
+    return `EVAL user.entity.id = COALESCE(
+                user.entity.id,
+                user.id,
+                user.email,
+                CASE(user.name IS NOT NULL AND user.name != "",
+                  CASE(
+                    user.domain IS NOT NULL AND user.domain != "", CONCAT(user.name, "@", user.domain),
+                    host.id IS NOT NULL AND host.id != "", CONCAT(user.name, "@", host.id),
+                    host.domain IS NOT NULL AND host.domain != "", CASE(
+                      host.name IS NOT NULL AND host.name != "", CONCAT(user.name, "@", host.name, ".", TO_STRING(host.domain)),
+                      host.hostname IS NOT NULL AND host.hostname != "", CONCAT(user.name, "@", host.hostname, ".", TO_STRING(host.domain)),
+                      NULL
+                    ),
+                    host.name IS NOT NULL AND host.name != "", CONCAT(user.name, "@", host.name),
+                    host.hostname IS NOT NULL AND host.hostname != "", CONCAT(user.name, "@", host.hostname),
+                    NULL
+                  ),
+                  NULL
+                ),
+                user.name
+            )`;
+  } else if (entityType === EntityType.host) {
+    return `EVAL host.entity.id = COALESCE(
+                host.entity.id,
+                host.id,
+                CASE(host.domain IS NOT NULL AND host.domain != "",
+                  CASE(
+                    host.name IS NOT NULL AND host.name != "", CONCAT(host.name, ".", TO_STRING(host.domain)),
+                    host.hostname IS NOT NULL AND host.hostname != "", CONCAT(host.hostname, ".", TO_STRING(host.domain)),
+                    NULL
+                  ),
+                  NULL
+                ),
+                CASE(host.mac IS NOT NULL AND host.mac != "",
+                  CASE(
+                    host.name IS NOT NULL AND host.name != "", CONCAT(host.name, "|", TO_STRING(host.mac)),
+                    host.hostname IS NOT NULL AND host.hostname != "", CONCAT(host.hostname, "|", TO_STRING(host.mac)),
+                    NULL
+                  ),
+                  NULL
+                ),
+                host.name,
+                host.hostname
+              )`;
+  } else if (entityType === EntityType.service) {
+    // Service entities use the standard service.name field
+    return `EVAL service.entity.id = COALESCE(service.entity.id, service.name)`;
+  }
+  // Generic entities already use entity.id as their identifier
+  return '';
+};
+
+/**
+ * Returns the entity identifier field to use for aggregation.
+ * For user and host entities, this is the calculated entity.id field.
+ * For service entities, it's service.entity.id.
+ * For generic entities, it's entity.id.
+ */
+export const getEntityIdField = (entityType: EntityType): string => {
+  return EntityTypeToEntityIdField[entityType];
+};
 
 type ESQLResults = Array<
   [EntityType, { scores: EntityRiskScoreRecord[]; afterKey: EntityAfterKey }]
@@ -206,9 +284,8 @@ export const calculateScoresWithESQL = async (
               page: {
                 buckets: riskScoreBuckets,
                 bounds,
-                identifierField: (EntityTypeToIdentifierField as Record<string, string>)[
-                  entityType
-                ],
+                // Use the new entity ID field for risk score storage
+                identifierField: getEntityIdField(entityType as EntityType),
               },
             });
 
@@ -348,10 +425,15 @@ export const getESQL = (
   pageSize: number,
   index: string = '.alerts-security.alerts-default'
 ) => {
-  const identifierField = EntityTypeToIdentifierField[entityType];
+  // Use the legacy identifier field for pagination filtering (since composite query uses it)
+  const legacyIdentifierField = EntityTypeToIdentifierField[entityType];
+  // Use the new entity ID field for aggregation
+  const entityIdField = getEntityIdField(entityType);
+  // Generate the EUID calculation clause
+  const euidClause = generateEUID(entityType);
 
-  const lower = afterKeys.lower ? `${identifierField} > ${afterKeys.lower}` : undefined;
-  const upper = afterKeys.upper ? `${identifierField} <= ${afterKeys.upper}` : undefined;
+  const lower = afterKeys.lower ? `${legacyIdentifierField} > ${afterKeys.lower}` : undefined;
+  const upper = afterKeys.upper ? `${legacyIdentifierField} <= ${afterKeys.upper}` : undefined;
   if (!lower && !upper) {
     throw new Error('Either lower or upper after key must be provided for pagination');
   }
@@ -366,6 +448,7 @@ export const getESQL = (
              kibana.alert.uuid as alert_id,
              event.kind as category,
              @timestamp as time
+    | ${euidClause}
     | EVAL rule_name_b64 = TO_BASE64(rule_name),
            category_b64 = TO_BASE64(category)
     | EVAL input = CONCAT(""" {"risk_score": """", risk_score::keyword, """", "time": """", time::keyword, """", "index": """", _index, """", "rule_name_b64": """", rule_name_b64, """\", "category_b64": """", category_b64, """\", "id": \"""", alert_id, """\" } """)
@@ -373,7 +456,7 @@ export const getESQL = (
         alert_count = count(risk_score),
         scores = MV_PSERIES_WEIGHTED_SUM(TOP(risk_score, ${sampleSize}, "desc"), ${RIEMANN_ZETA_S_VALUE}),
         risk_inputs = TOP(input, 10, "desc")
-    BY ${identifierField}
+    BY ${entityIdField}
     | SORT scores DESC
     | LIMIT ${pageSize}
   `;
@@ -435,8 +518,11 @@ export const buildRiskScoreBucket =
       };
     });
 
+    // Use the new entity ID field for the bucket key
+    const entityIdField = getEntityIdField(entityType);
+
     return {
-      key: { [EntityTypeToIdentifierField[entityType]]: entity },
+      key: { [entityIdField]: entity },
       doc_count: count,
       top_inputs: {
         doc_count: inputs.length,

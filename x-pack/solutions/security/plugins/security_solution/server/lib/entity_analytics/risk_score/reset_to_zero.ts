@@ -8,6 +8,7 @@
 import type { ElasticsearchClient, Logger } from '@kbn/core/server';
 import {
   EntityTypeToIdentifierField,
+  EntityTypeToEntityIdField,
   type EntityType,
 } from '../../../../common/entity_analytics/types';
 import type { RiskScoreDataClient } from './risk_score_data_client';
@@ -40,8 +41,9 @@ export const resetToZero = async ({
   excludedEntities,
 }: ResetToZeroDependencies): Promise<{ scoresWritten: number }> => {
   const { alias } = await getIndexPatternDataStream(spaceId);
-  const entityField = EntityTypeToIdentifierField[entityType];
-  const excludedEntitiesClause = `AND ${entityField} NOT IN (${excludedEntities
+  // Use the new entity ID field for reading from stored risk scores
+  const entityIdField = EntityTypeToEntityIdField[entityType];
+  const excludedEntitiesClause = `AND ${entityIdField} NOT IN (${excludedEntities
     .map((e) => `"${e}"`)
     .join(',')})`;
   const esql = /* sql */ `
@@ -49,8 +51,8 @@ export const resetToZero = async ({
     | WHERE ${entityType}.${RISK_SCORE_FIELD} > 0 ${
     excludedEntities.length > 0 ? excludedEntitiesClause : ''
   }
-    | STATS count = count(${entityField}) BY ${entityField}
-    | KEEP ${entityField}
+    | STATS count = count(${entityIdField}) BY ${entityIdField}
+    | KEEP ${entityIdField}
     `;
 
   logger.debug(`Reset to zero ESQL query:\n${esql}`);
@@ -73,7 +75,7 @@ export const resetToZero = async ({
     }
 
     const bucket: RiskScoreBucket = {
-      key: { [EntityTypeToIdentifierField[entityType]]: entity },
+      key: { [entityIdField]: entity },
       doc_count: 0,
       top_inputs: {
         doc_count: 0,
@@ -95,7 +97,7 @@ export const resetToZero = async ({
   const scores = await processScores({
     assetCriticalityService,
     buckets,
-    identifierField: EntityTypeToIdentifierField[entityType],
+    identifierField: entityIdField,
     logger,
     now: new Date().toISOString(),
   });

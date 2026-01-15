@@ -8,7 +8,10 @@
 import type { QueryDslQueryContainer } from '@elastic/elasticsearch/lib/api/types';
 import type { Logger } from '@kbn/core/server';
 import type { EntityType } from '../../../../common/entity_analytics/types';
-import { EntityTypeToIdentifierField } from '../../../../common/entity_analytics/types';
+import {
+  EntityTypeToIdentifierField,
+  EntityTypeToEntityIdField,
+} from '../../../../common/entity_analytics/types';
 import type {
   RiskScoresCalculationResponse,
   AssetCriticalityRecord,
@@ -30,8 +33,19 @@ import { applyCriticalityToScore, getCriticalityModifier } from '../asset_critic
 import type { CalculateScoresParams, RiskScoreBucket } from '../types';
 import { RIEMANN_ZETA_VALUE } from './constants';
 
+/**
+ * Returns the legacy identifier field for an entity type (e.g., user.name, host.name).
+ * Used for filtering alerts which contain the original entity fields.
+ */
 export const getFieldForIdentifier = (identifierType: EntityType): string =>
   EntityTypeToIdentifierField[identifierType];
+
+/**
+ * Returns the computed entity ID field for an entity type (e.g., user.entity.id, host.entity.id).
+ * Used for aggregation and storage of entity risk scores with EUID mechanism.
+ */
+export const getEntityIdFieldForIdentifier = (identifierType: EntityType): string =>
+  EntityTypeToEntityIdField[identifierType];
 
 export const getAfterKeyForIdentifierType = ({
   afterKeys,

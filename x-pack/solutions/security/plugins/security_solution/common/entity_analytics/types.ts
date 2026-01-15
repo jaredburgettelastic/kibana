@@ -23,11 +23,30 @@ export enum EntityIdentifierFields {
   userName = 'user.name',
   serviceName = 'service.name',
   generic = 'entity.id',
+  // New entity ID fields for EUID-based identification
+  hostEntityId = 'host.entity.id',
+  userEntityId = 'user.entity.id',
+  serviceEntityId = 'service.entity.id',
 }
 
+/**
+ * Maps entity types to their legacy identifier fields.
+ * Used for composite query pagination and backward compatibility.
+ */
 export const EntityTypeToIdentifierField: Record<EntityType, EntityIdentifierFields> = {
   [EntityType.host]: EntityIdentifierFields.hostName,
   [EntityType.user]: EntityIdentifierFields.userName,
   [EntityType.service]: EntityIdentifierFields.serviceName,
+  [EntityType.generic]: EntityIdentifierFields.generic,
+};
+
+/**
+ * Maps entity types to their computed entity ID fields.
+ * Used for aggregation and storage of entity risk scores with EUID mechanism.
+ */
+export const EntityTypeToEntityIdField: Record<EntityType, EntityIdentifierFields> = {
+  [EntityType.host]: EntityIdentifierFields.hostEntityId,
+  [EntityType.user]: EntityIdentifierFields.userEntityId,
+  [EntityType.service]: EntityIdentifierFields.serviceEntityId,
   [EntityType.generic]: EntityIdentifierFields.generic,
 };

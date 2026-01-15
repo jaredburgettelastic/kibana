@@ -7,15 +7,85 @@
 
 import { EntityType } from '../../../../common/search_strategy';
 import type { FieldValue } from '@elastic/elasticsearch/lib/api/types';
-import { buildRiskScoreBucket, getESQL } from './calculate_esql_risk_scores';
+import {
+  buildRiskScoreBucket,
+  getESQL,
+  generateEUID,
+  getEntityIdField,
+} from './calculate_esql_risk_scores';
 import type { RiskScoreBucket } from '../types';
 import { RIEMANN_ZETA_S_VALUE, RIEMANN_ZETA_VALUE } from './constants';
 
 describe('Calculate risk scores with ESQL', () => {
+  describe('generateEUID', () => {
+    it('generates EUID calculation for user entity type', () => {
+      const euid = generateEUID(EntityType.user);
+      expect(euid).toContain('EVAL user.entity.id = COALESCE(');
+      expect(euid).toContain('user.entity.id,');
+      expect(euid).toContain('user.id,');
+      expect(euid).toContain('user.email,');
+      expect(euid).toContain('user.name');
+      expect(euid).toContain('user.domain');
+      expect(euid).toContain('host.id');
+      expect(euid).toContain('host.name');
+    });
+
+    it('generates EUID calculation for host entity type', () => {
+      const euid = generateEUID(EntityType.host);
+      expect(euid).toContain('EVAL host.entity.id = COALESCE(');
+      expect(euid).toContain('host.entity.id,');
+      expect(euid).toContain('host.id,');
+      expect(euid).toContain('host.domain');
+      expect(euid).toContain('host.name');
+      expect(euid).toContain('host.hostname');
+      expect(euid).toContain('host.mac');
+    });
+
+    it('generates EUID calculation for service entity type', () => {
+      const euid = generateEUID(EntityType.service);
+      expect(euid).toContain('EVAL service.entity.id = COALESCE(service.entity.id, service.name)');
+    });
+
+    it('returns empty string for generic entity type', () => {
+      const euid = generateEUID(EntityType.generic);
+      expect(euid).toBe('');
+    });
+  });
+
+  describe('getEntityIdField', () => {
+    it('returns user.entity.id for user entity type', () => {
+      expect(getEntityIdField(EntityType.user)).toBe('user.entity.id');
+    });
+
+    it('returns host.entity.id for host entity type', () => {
+      expect(getEntityIdField(EntityType.host)).toBe('host.entity.id');
+    });
+
+    it('returns service.entity.id for service entity type', () => {
+      expect(getEntityIdField(EntityType.service)).toBe('service.entity.id');
+    });
+
+    it('returns entity.id for generic entity type', () => {
+      expect(getEntityIdField(EntityType.generic)).toBe('entity.id');
+    });
+  });
+
   describe('ESQL query', () => {
     it('matches snapshot', () => {
       const q = getESQL(EntityType.host, { lower: 'abel', upper: 'zuzanna' }, 10000, 3500);
       expect(q).toMatchSnapshot();
+    });
+
+    it('includes EUID calculation for host entity type', () => {
+      const q = getESQL(EntityType.host, { lower: 'abel', upper: 'zuzanna' }, 10000, 3500);
+      expect(q).toContain('EVAL host.entity.id = COALESCE(');
+      expect(q).toContain('BY host.entity.id');
+    });
+
+    it('includes EUID calculation for user entity type', () => {
+      const q = getESQL(EntityType.user, { lower: 'abel', upper: 'zuzanna' }, 10000, 3500);
+      expect(q).toContain('EVAL user.entity.id = COALESCE(');
+      expect(q).toContain('BY user.entity.id');
     });
   });
 
@@ -40,7 +110,7 @@ describe('Calculate risk scores with ESQL', () => {
       )(esqlResultRow as FieldValue[]);
 
       const expected: RiskScoreBucket = {
-        key: { 'host.name': entityValue },
+        key: { 'host.entity.id': entityValue },
         doc_count: alertCount,
         top_inputs: {
           doc_count: inputs.length,

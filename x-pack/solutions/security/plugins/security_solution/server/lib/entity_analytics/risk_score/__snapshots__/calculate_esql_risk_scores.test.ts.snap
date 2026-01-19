@@ -3,7 +3,7 @@
 exports[`Calculate risk scores with ESQL ESQL query matches snapshot 1`] = `
 "
   FROM .alerts-security.alerts-default METADATA _index
-    | WHERE kibana.alert.risk_score IS NOT NULL AND KQL(\\"host.name > abel and host.name <= zuzanna\\")
+    | WHERE kibana.alert.risk_score IS NOT NULL
     | RENAME kibana.alert.risk_score as risk_score,
              kibana.alert.rule.name as rule_name,
              kibana.alert.rule.uuid as rule_id,
@@ -32,6 +32,7 @@ exports[`Calculate risk scores with ESQL ESQL query matches snapshot 1`] = `
                 host.name,
                 host.hostname
               )
+    | WHERE host.entity.id > \\"abel\\" AND host.entity.id <= \\"zuzanna\\"
     | EVAL rule_name_b64 = TO_BASE64(rule_name),
            category_b64 = TO_BASE64(category)
     | EVAL input = CONCAT(\\"\\"\\" {\\"risk_score\\": \\"\\"\\"\\", risk_score::keyword, \\"\\"\\"\\", \\"time\\": \\"\\"\\"\\", time::keyword, \\"\\"\\"\\", \\"index\\": \\"\\"\\"\\", _index, \\"\\"\\"\\", \\"rule_name_b64\\": \\"\\"\\"\\", rule_name_b64, \\"\\"\\"\\", \\"category_b64\\": \\"\\"\\"\\", category_b64, \\"\\"\\"\\", \\"id\\": \\"\\"\\"\\", alert_id, \\"\\"\\"\\" } \\"\\"\\")

@@ -12,6 +12,11 @@ import {
   getESQL,
   generateEUID,
   getEntityIdField,
+  getHostEntityIdPainlessScript,
+  getUserEntityIdPainlessScript,
+  getServiceEntityIdPainlessScript,
+  getEntityIdPainlessScript,
+  getEntityIdRuntimeMappings,
 } from './calculate_esql_risk_scores';
 import type { RiskScoreBucket } from '../types';
 import { RIEMANN_ZETA_S_VALUE, RIEMANN_ZETA_VALUE } from './constants';
@@ -70,6 +75,117 @@ describe('Calculate risk scores with ESQL', () => {
     });
   });
 
+  describe('Painless scripts for runtime mappings', () => {
+    describe('getHostEntityIdPainlessScript', () => {
+      it('generates a valid Painless script with isValid helper', () => {
+        const script = getHostEntityIdPainlessScript();
+        expect(script).toContain('boolean isValid(def value)');
+        expect(script).toContain("doc.containsKey('host.entity.id')");
+        expect(script).toContain("doc.containsKey('host.id')");
+        expect(script).toContain("doc.containsKey('host.name')");
+        expect(script).toContain("doc.containsKey('host.hostname')");
+        expect(script).toContain("doc.containsKey('host.domain')");
+        expect(script).toContain("doc.containsKey('host.mac')");
+      });
+
+      it('handles host.name.host.domain combination', () => {
+        const script = getHostEntityIdPainlessScript();
+        expect(script).toContain('hostName + "." + hostDomain');
+      });
+
+      it('handles host.name|host.mac combination', () => {
+        const script = getHostEntityIdPainlessScript();
+        expect(script).toContain('hostName + "|" + hostMac');
+      });
+    });
+
+    describe('getUserEntityIdPainlessScript', () => {
+      it('generates a valid Painless script with isValid helper', () => {
+        const script = getUserEntityIdPainlessScript();
+        expect(script).toContain('boolean isValid(def value)');
+        expect(script).toContain("doc.containsKey('user.entity.id')");
+        expect(script).toContain("doc.containsKey('user.id')");
+        expect(script).toContain("doc.containsKey('user.email')");
+        expect(script).toContain("doc.containsKey('user.name')");
+        expect(script).toContain("doc.containsKey('user.domain')");
+      });
+
+      it('handles user.name@user.domain combination', () => {
+        const script = getUserEntityIdPainlessScript();
+        expect(script).toContain('userName + "@" + userDomain');
+      });
+
+      it('handles user.name@host.entity.id combination', () => {
+        const script = getUserEntityIdPainlessScript();
+        expect(script).toContain('userName + "@" + hostEntityId');
+      });
+
+      it('computes host.entity.id inline for user.entity.id calculation', () => {
+        const script = getUserEntityIdPainlessScript();
+        // User script should include host.entity.id computation logic
+        expect(script).toContain("doc.containsKey('host.id')");
+        expect(script).toContain("doc.containsKey('host.name')");
+      });
+    });
+
+    describe('getServiceEntityIdPainlessScript', () => {
+      it('generates a simple Painless script for service entities', () => {
+        const script = getServiceEntityIdPainlessScript();
+        expect(script).toContain("doc.containsKey('service.entity.id')");
+        expect(script).toContain("doc.containsKey('service.name')");
+      });
+    });
+
+    describe('getEntityIdPainlessScript', () => {
+      it('returns host script for host entity type', () => {
+        const script = getEntityIdPainlessScript(EntityType.host);
+        expect(script).toContain("doc.containsKey('host.entity.id')");
+      });
+
+      it('returns user script for user entity type', () => {
+        const script = getEntityIdPainlessScript(EntityType.user);
+        expect(script).toContain("doc.containsKey('user.entity.id')");
+      });
+
+      it('returns service script for service entity type', () => {
+        const script = getEntityIdPainlessScript(EntityType.service);
+        expect(script).toContain("doc.containsKey('service.entity.id')");
+      });
+
+      it('returns null for generic entity type', () => {
+        const script = getEntityIdPainlessScript(EntityType.generic);
+        expect(script).toBeNull();
+      });
+    });
+
+    describe('getEntityIdRuntimeMappings', () => {
+      it('generates runtime mappings for host entity type', () => {
+        const mappings = getEntityIdRuntimeMappings([EntityType.host]);
+        expect(mappings).toHaveProperty('host.entity.id');
+        expect(mappings['host.entity.id'].type).toBe('keyword');
+        expect(mappings['host.entity.id'].script.source).toContain("doc.containsKey('host.id')");
+      });
+
+      it('generates runtime mappings for user entity type', () => {
+        const mappings = getEntityIdRuntimeMappings([EntityType.user]);
+        expect(mappings).toHaveProperty('user.entity.id');
+        expect(mappings['user.entity.id'].type).toBe('keyword');
+        expect(mappings['user.entity.id'].script.source).toContain("doc.containsKey('user.id')");
+      });
+
+      it('generates runtime mappings for multiple entity types', () => {
+        const mappings = getEntityIdRuntimeMappings([EntityType.host, EntityType.user]);
+        expect(mappings).toHaveProperty('host.entity.id');
+        expect(mappings).toHaveProperty('user.entity.id');
+      });
+
+      it('does not generate runtime mapping for generic entity type', () => {
+        const mappings = getEntityIdRuntimeMappings([EntityType.generic]);
+        expect(mappings).toEqual({});
+      });
+    });
+  });
+
   describe('ESQL query', () => {
     it('matches snapshot', () => {
       const q = getESQL(EntityType.host, { lower: 'abel', upper: 'zuzanna' }, 10000, 3500);
@@ -86,6 +202,21 @@ describe('Calculate risk scores with ESQL', () => {
       const q = getESQL(EntityType.user, { lower: 'abel', upper: 'zuzanna' }, 10000, 3500);
       expect(q).toContain('EVAL user.entity.id = COALESCE(');
       expect(q).toContain('BY user.entity.id');
+    });
+
+    it('filters by entity ID after computing it', () => {
+      const q = getESQL(EntityType.host, { lower: 'abel', upper: 'zuzanna' }, 10000, 3500);
+      // The entity ID filter should appear AFTER the EVAL that computes the entity ID
+      const evalIndex = q.indexOf('EVAL host.entity.id = COALESCE(');
+      const whereIndex = q.indexOf('WHERE host.entity.id >');
+      expect(evalIndex).toBeGreaterThan(-1);
+      expect(whereIndex).toBeGreaterThan(evalIndex);
+    });
+
+    it('uses quoted string values in entity ID range filter', () => {
+      const q = getESQL(EntityType.user, { lower: 'john@domain', upper: 'mary@domain' }, 10000, 100);
+      expect(q).toContain('user.entity.id > "john@domain"');
+      expect(q).toContain('user.entity.id <= "mary@domain"');
     });
   });
 

@@ -114,6 +114,236 @@ export const getEntityIdField = (entityType: EntityType): string => {
   return EntityTypeToEntityIdField[entityType];
 };
 
+/**
+ * Painless helper function that checks if a value is valid (not null and not empty string).
+ * This is used as a prefix for the entity ID runtime mapping scripts.
+ */
+const PAINLESS_IS_VALID_HELPER = `
+boolean isValid(def value) {
+  if (value == null) {
+    return false;
+  }
+  if (value instanceof String && value.trim().isEmpty()) {
+    return false;
+  }
+  return true;
+}
+`;
+
+/**
+ * Generates a Painless script for computing host.entity.id at runtime.
+ * This script calculates a unique identifier for host entities using a priority-based fallback:
+ * 1. host.entity.id (if already present)
+ * 2. host.id
+ * 3. host.name.host.domain
+ * 4. host.hostname.host.domain
+ * 5. host.name|host.mac
+ * 6. host.hostname|host.mac
+ * 7. host.hostname
+ * 8. host.name
+ */
+export const getHostEntityIdPainlessScript = (): string => {
+  return `
+${PAINLESS_IS_VALID_HELPER}
+// Check if host.entity.id already exists
+if (doc.containsKey('host.entity.id') && doc['host.entity.id'].size() > 0) {
+  emit(doc['host.entity.id'].value);
+  return;
+}
+
+def hostId = doc.containsKey('host.id') && doc['host.id'].size() > 0 ? doc['host.id'].value : null;
+def hostName = doc.containsKey('host.name') && doc['host.name'].size() > 0 ? doc['host.name'].value : null;
+def hostHostname = doc.containsKey('host.hostname') && doc['host.hostname'].size() > 0 ? doc['host.hostname'].value : null;
+def hostDomain = doc.containsKey('host.domain') && doc['host.domain'].size() > 0 ? doc['host.domain'].value : null;
+def hostMac = doc.containsKey('host.mac') && doc['host.mac'].size() > 0 ? doc['host.mac'].value : null;
+
+// 2. host.id
+if (isValid(hostId)) {
+  emit(hostId);
+  return;
+}
+// 3. host.name.host.domain
+if (isValid(hostName) && isValid(hostDomain)) {
+  emit(hostName + "." + hostDomain);
+  return;
+}
+// 4. host.hostname.host.domain
+if (isValid(hostHostname) && isValid(hostDomain)) {
+  emit(hostHostname + "." + hostDomain);
+  return;
+}
+// 5. host.name|host.mac
+if (isValid(hostName) && isValid(hostMac)) {
+  emit(hostName + "|" + hostMac);
+  return;
+}
+// 6. host.hostname|host.mac
+if (isValid(hostHostname) && isValid(hostMac)) {
+  emit(hostHostname + "|" + hostMac);
+  return;
+}
+// 7. host.hostname
+if (isValid(hostHostname)) {
+  emit(hostHostname);
+  return;
+}
+// 8. host.name
+if (isValid(hostName)) {
+  emit(hostName);
+  return;
+}
+// No valid identifier found - emit empty string to avoid null issues
+emit("");
+`;
+};
+
+/**
+ * Generates a Painless script for computing user.entity.id at runtime.
+ * This script calculates a unique identifier for user entities using a priority-based fallback:
+ * 1. user.entity.id (if already present)
+ * 2. user.id
+ * 3. user.email
+ * 4. user.name@user.domain
+ * 5. user.name@host.entity.id (computed)
+ * 6. user.name
+ */
+export const getUserEntityIdPainlessScript = (): string => {
+  return `
+${PAINLESS_IS_VALID_HELPER}
+// Check if user.entity.id already exists
+if (doc.containsKey('user.entity.id') && doc['user.entity.id'].size() > 0) {
+  emit(doc['user.entity.id'].value);
+  return;
+}
+
+def userId = doc.containsKey('user.id') && doc['user.id'].size() > 0 ? doc['user.id'].value : null;
+def userEmail = doc.containsKey('user.email') && doc['user.email'].size() > 0 ? doc['user.email'].value : null;
+def userName = doc.containsKey('user.name') && doc['user.name'].size() > 0 ? doc['user.name'].value : null;
+def userDomain = doc.containsKey('user.domain') && doc['user.domain'].size() > 0 ? doc['user.domain'].value : null;
+
+// Compute host.entity.id for potential use in user.entity.id
+def hostEntityId = null;
+if (doc.containsKey('host.entity.id') && doc['host.entity.id'].size() > 0) {
+  hostEntityId = doc['host.entity.id'].value;
+} else {
+  def hostId = doc.containsKey('host.id') && doc['host.id'].size() > 0 ? doc['host.id'].value : null;
+  def hostName = doc.containsKey('host.name') && doc['host.name'].size() > 0 ? doc['host.name'].value : null;
+  def hostHostname = doc.containsKey('host.hostname') && doc['host.hostname'].size() > 0 ? doc['host.hostname'].value : null;
+  def hostDomain = doc.containsKey('host.domain') && doc['host.domain'].size() > 0 ? doc['host.domain'].value : null;
+  def hostMac = doc.containsKey('host.mac') && doc['host.mac'].size() > 0 ? doc['host.mac'].value : null;
+
+  if (isValid(hostId)) {
+    hostEntityId = hostId;
+  } else if (isValid(hostName) && isValid(hostDomain)) {
+    hostEntityId = hostName + "." + hostDomain;
+  } else if (isValid(hostHostname) && isValid(hostDomain)) {
+    hostEntityId = hostHostname + "." + hostDomain;
+  } else if (isValid(hostName) && isValid(hostMac)) {
+    hostEntityId = hostName + "|" + hostMac;
+  } else if (isValid(hostHostname) && isValid(hostMac)) {
+    hostEntityId = hostHostname + "|" + hostMac;
+  } else if (isValid(hostHostname)) {
+    hostEntityId = hostHostname;
+  } else if (isValid(hostName)) {
+    hostEntityId = hostName;
+  }
+}
+
+// 2. user.id
+if (isValid(userId)) {
+  emit(userId);
+  return;
+}
+// 3. user.email
+if (isValid(userEmail)) {
+  emit(userEmail);
+  return;
+}
+// 4. user.name@user.domain
+if (isValid(userName) && isValid(userDomain)) {
+  emit(userName + "@" + userDomain);
+  return;
+}
+// 5. user.name@host.entity.id
+if (isValid(userName) && isValid(hostEntityId)) {
+  emit(userName + "@" + hostEntityId);
+  return;
+}
+// 6. user.name
+if (isValid(userName)) {
+  emit(userName);
+  return;
+}
+// No valid identifier found - emit empty string to avoid null issues
+emit("");
+`;
+};
+
+/**
+ * Generates a Painless script for computing service.entity.id at runtime.
+ * This script calculates a unique identifier for service entities using a simple fallback:
+ * 1. service.entity.id (if already present)
+ * 2. service.name
+ */
+export const getServiceEntityIdPainlessScript = (): string => {
+  return `
+// Check if service.entity.id already exists
+if (doc.containsKey('service.entity.id') && doc['service.entity.id'].size() > 0) {
+  emit(doc['service.entity.id'].value);
+  return;
+}
+if (doc.containsKey('service.name') && doc['service.name'].size() > 0) {
+  emit(doc['service.name'].value);
+  return;
+}
+emit("");
+`;
+};
+
+/**
+ * Returns the Painless script for computing the entity ID field for a given entity type.
+ */
+export const getEntityIdPainlessScript = (entityType: EntityType): string | null => {
+  switch (entityType) {
+    case EntityType.host:
+      return getHostEntityIdPainlessScript();
+    case EntityType.user:
+      return getUserEntityIdPainlessScript();
+    case EntityType.service:
+      return getServiceEntityIdPainlessScript();
+    case EntityType.generic:
+      // Generic entities use entity.id directly, no runtime computation needed
+      return null;
+    default:
+      return null;
+  }
+};
+
+/**
+ * Generates runtime mappings for computing entity IDs for the specified entity types.
+ * These mappings are used in composite aggregations to group by computed entity IDs.
+ */
+export const getEntityIdRuntimeMappings = (
+  entityTypes: EntityType[]
+): Record<string, { type: string; script: { source: string } }> => {
+  const mappings: Record<string, { type: string; script: { source: string } }> = {};
+
+  for (const entityType of entityTypes) {
+    const script = getEntityIdPainlessScript(entityType);
+    if (script) {
+      const fieldName = getEntityIdField(entityType);
+      mappings[fieldName] = {
+        type: 'keyword',
+        script: {
+          source: script,
+        },
+      };
+    }
+  }
+
+  return mappings;
+};
+
 type ESQLResults = Array<
   [EntityType, { scores: EntityRiskScoreRecord[]; afterKey: EntityAfterKey }]
 >;
@@ -237,9 +467,9 @@ export const calculateScoresWithESQL = async (
           buckets: Array<{ key: Record<string, string> }>;
           after_key?: Record<string, string>;
         };
-        const entities = buckets.map(
-          ({ key }) => key[(EntityTypeToIdentifierField as Record<string, string>)[entityType]]
-        );
+        // Use the computed entity ID field for extracting entities from composite buckets
+        const entityIdField = getEntityIdField(entityType as EntityType);
+        const entities = buckets.map(({ key }) => key[entityIdField]);
 
         if (entities.length === 0) {
           return Promise.resolve([
@@ -247,11 +477,12 @@ export const calculateScoresWithESQL = async (
             { afterKey: afterKey || {}, scores: [] },
           ] satisfies ESQLResults[number]);
         }
+        // Use entity ID field for pagination bounds
         const bounds = {
           lower: (params.afterKeys as Record<string, Record<string, string>>)[entityType]?.[
-            (EntityTypeToIdentifierField as Record<string, string>)[entityType]
+            entityIdField
           ],
-          upper: afterKey?.[(EntityTypeToIdentifierField as Record<string, string>)[entityType]],
+          upper: afterKey?.[entityIdField],
         };
 
         const query = getESQL(
@@ -377,11 +608,20 @@ export const getCompositeQuery = (
   filter: QueryDslQueryContainer[],
   params: CalculateScoresParams
 ) => {
+  // Generate runtime mappings for computing entity IDs
+  const entityIdRuntimeMappings = getEntityIdRuntimeMappings(entityTypes);
+
+  // Merge with any existing runtime mappings from params
+  const mergedRuntimeMappings = {
+    ...params.runtimeMappings,
+    ...entityIdRuntimeMappings,
+  };
+
   return {
     size: 0,
     index: params.index,
     ignore_unavailable: true,
-    runtime_mappings: params.runtimeMappings,
+    runtime_mappings: mergedRuntimeMappings,
     query: {
       function_score: {
         query: {
@@ -400,13 +640,14 @@ export const getCompositeQuery = (
       },
     },
     aggs: entityTypes.reduce((aggs, entityType) => {
-      const idField = EntityTypeToIdentifierField[entityType];
+      // Use the computed entity ID field for aggregation
+      const entityIdField = getEntityIdField(entityType);
       return {
         ...aggs,
         [entityType]: {
           composite: {
             size: params.pageSize,
-            sources: [{ [idField]: { terms: { field: idField } } }],
+            sources: [{ [entityIdField]: { terms: { field: entityIdField } } }],
             after: params.afterKeys[entityType],
           },
         },
@@ -425,23 +666,22 @@ export const getESQL = (
   pageSize: number,
   index: string = '.alerts-security.alerts-default'
 ) => {
-  // Use the legacy identifier field for pagination filtering (since composite query uses it)
-  const legacyIdentifierField = EntityTypeToIdentifierField[entityType];
-  // Use the new entity ID field for aggregation
+  // Use the new entity ID field for both filtering and aggregation
   const entityIdField = getEntityIdField(entityType);
   // Generate the EUID calculation clause
   const euidClause = generateEUID(entityType);
 
-  const lower = afterKeys.lower ? `${legacyIdentifierField} > ${afterKeys.lower}` : undefined;
-  const upper = afterKeys.upper ? `${legacyIdentifierField} <= ${afterKeys.upper}` : undefined;
+  // Build the range filter using entity ID (which is computed before this filter is applied)
+  const lower = afterKeys.lower ? `${entityIdField} > "${afterKeys.lower}"` : undefined;
+  const upper = afterKeys.upper ? `${entityIdField} <= "${afterKeys.upper}"` : undefined;
   if (!lower && !upper) {
     throw new Error('Either lower or upper after key must be provided for pagination');
   }
-  const rangeClause = [lower, upper].filter(Boolean).join(' and ');
+  const rangeClause = [lower, upper].filter(Boolean).join(' AND ');
 
   const query = /* SQL */ `
   FROM ${index} METADATA _index
-    | WHERE kibana.alert.risk_score IS NOT NULL AND KQL("${rangeClause}")
+    | WHERE kibana.alert.risk_score IS NOT NULL
     | RENAME kibana.alert.risk_score as risk_score,
              kibana.alert.rule.name as rule_name,
              kibana.alert.rule.uuid as rule_id,
@@ -449,6 +689,7 @@ export const getESQL = (
              event.kind as category,
              @timestamp as time
     | ${euidClause}
+    | WHERE ${rangeClause}
     | EVAL rule_name_b64 = TO_BASE64(rule_name),
            category_b64 = TO_BASE64(category)
     | EVAL input = CONCAT(""" {"risk_score": """", risk_score::keyword, """", "time": """", time::keyword, """", "index": """", _index, """", "rule_name_b64": """", rule_name_b64, """\", "category_b64": """", category_b64, """\", "id": \"""", alert_id, """\" } """)

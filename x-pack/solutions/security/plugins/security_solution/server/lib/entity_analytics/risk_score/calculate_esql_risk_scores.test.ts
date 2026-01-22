@@ -80,12 +80,17 @@ describe('Calculate risk scores with ESQL', () => {
       it('generates a valid Painless script with isValid helper', () => {
         const script = getHostEntityIdPainlessScript();
         expect(script).toContain('boolean isValid(def value)');
-        expect(script).toContain("doc.containsKey('host.entity.id')");
+        expect(script).toContain('getNestedField(params._source');
         expect(script).toContain("doc.containsKey('host.id')");
         expect(script).toContain("doc.containsKey('host.name')");
         expect(script).toContain("doc.containsKey('host.hostname')");
         expect(script).toContain("doc.containsKey('host.domain')");
         expect(script).toContain("doc.containsKey('host.mac')");
+      });
+
+      it('checks for existing host.entity.id in source document', () => {
+        const script = getHostEntityIdPainlessScript();
+        expect(script).toContain("getNestedField(params._source, 'host.entity.id')");
       });
 
       it('handles host.name.host.domain combination', () => {
@@ -103,11 +108,16 @@ describe('Calculate risk scores with ESQL', () => {
       it('generates a valid Painless script with isValid helper', () => {
         const script = getUserEntityIdPainlessScript();
         expect(script).toContain('boolean isValid(def value)');
-        expect(script).toContain("doc.containsKey('user.entity.id')");
+        expect(script).toContain('getNestedField(params._source');
         expect(script).toContain("doc.containsKey('user.id')");
         expect(script).toContain("doc.containsKey('user.email')");
         expect(script).toContain("doc.containsKey('user.name')");
         expect(script).toContain("doc.containsKey('user.domain')");
+      });
+
+      it('checks for existing user.entity.id in source document', () => {
+        const script = getUserEntityIdPainlessScript();
+        expect(script).toContain("getNestedField(params._source, 'user.entity.id')");
       });
 
       it('handles user.name@user.domain combination', () => {
@@ -129,27 +139,35 @@ describe('Calculate risk scores with ESQL', () => {
     });
 
     describe('getServiceEntityIdPainlessScript', () => {
-      it('generates a simple Painless script for service entities', () => {
+      it('generates a Painless script for service entities', () => {
         const script = getServiceEntityIdPainlessScript();
-        expect(script).toContain("doc.containsKey('service.entity.id')");
+        expect(script).toContain('getNestedField(params._source');
         expect(script).toContain("doc.containsKey('service.name')");
+      });
+
+      it('checks for existing service.entity.id in source document', () => {
+        const script = getServiceEntityIdPainlessScript();
+        expect(script).toContain("getNestedField(params._source, 'service.entity.id')");
       });
     });
 
     describe('getEntityIdPainlessScript', () => {
       it('returns host script for host entity type', () => {
         const script = getEntityIdPainlessScript(EntityType.host);
-        expect(script).toContain("doc.containsKey('host.entity.id')");
+        expect(script).toContain('getNestedField(params._source');
+        expect(script).toContain("doc.containsKey('host.id')");
       });
 
       it('returns user script for user entity type', () => {
         const script = getEntityIdPainlessScript(EntityType.user);
-        expect(script).toContain("doc.containsKey('user.entity.id')");
+        expect(script).toContain('getNestedField(params._source');
+        expect(script).toContain("doc.containsKey('user.id')");
       });
 
       it('returns service script for service entity type', () => {
         const script = getEntityIdPainlessScript(EntityType.service);
-        expect(script).toContain("doc.containsKey('service.entity.id')");
+        expect(script).toContain('getNestedField(params._source');
+        expect(script).toContain("doc.containsKey('service.name')");
       });
 
       it('returns null for generic entity type', () => {

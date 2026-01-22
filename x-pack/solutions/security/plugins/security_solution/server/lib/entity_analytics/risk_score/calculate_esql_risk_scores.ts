@@ -133,7 +133,7 @@ boolean isValid(def value) {
 /**
  * Generates a Painless script for computing host.entity.id at runtime.
  * This script calculates a unique identifier for host entities using a priority-based fallback:
- * 1. host.entity.id (if already present)
+ * 1. host.entity.id (if already present in source document)
  * 2. host.id
  * 3. host.name.host.domain
  * 4. host.hostname.host.domain
@@ -145,9 +145,23 @@ boolean isValid(def value) {
 export const getHostEntityIdPainlessScript = (): string => {
   return `
 ${PAINLESS_IS_VALID_HELPER}
-// Check if host.entity.id already exists
-if (doc.containsKey('host.entity.id') && doc['host.entity.id'].size() > 0) {
-  emit(doc['host.entity.id'].value);
+// Helper to safely get nested field from source
+def getNestedField(def source, String path) {
+  def parts = path.splitOnToken('.');
+  def current = source;
+  for (def part : parts) {
+    if (current == null || !(current instanceof Map)) {
+      return null;
+    }
+    current = current.get(part);
+  }
+  return current;
+}
+
+// Check if host.entity.id already exists in the source document (not runtime field)
+def existingEntityId = getNestedField(params._source, 'host.entity.id');
+if (isValid(existingEntityId)) {
+  emit(existingEntityId.toString());
   return;
 }
 
@@ -200,7 +214,7 @@ emit("");
 /**
  * Generates a Painless script for computing user.entity.id at runtime.
  * This script calculates a unique identifier for user entities using a priority-based fallback:
- * 1. user.entity.id (if already present)
+ * 1. user.entity.id (if already present in source document)
  * 2. user.id
  * 3. user.email
  * 4. user.name@user.domain
@@ -210,9 +224,23 @@ emit("");
 export const getUserEntityIdPainlessScript = (): string => {
   return `
 ${PAINLESS_IS_VALID_HELPER}
-// Check if user.entity.id already exists
-if (doc.containsKey('user.entity.id') && doc['user.entity.id'].size() > 0) {
-  emit(doc['user.entity.id'].value);
+// Helper to safely get nested field from source
+def getNestedField(def source, String path) {
+  def parts = path.splitOnToken('.');
+  def current = source;
+  for (def part : parts) {
+    if (current == null || !(current instanceof Map)) {
+      return null;
+    }
+    current = current.get(part);
+  }
+  return current;
+}
+
+// Check if user.entity.id already exists in the source document (not runtime field)
+def existingEntityId = getNestedField(params._source, 'user.entity.id');
+if (isValid(existingEntityId)) {
+  emit(existingEntityId.toString());
   return;
 }
 
@@ -222,10 +250,9 @@ def userName = doc.containsKey('user.name') && doc['user.name'].size() > 0 ? doc
 def userDomain = doc.containsKey('user.domain') && doc['user.domain'].size() > 0 ? doc['user.domain'].value : null;
 
 // Compute host.entity.id for potential use in user.entity.id
-def hostEntityId = null;
-if (doc.containsKey('host.entity.id') && doc['host.entity.id'].size() > 0) {
-  hostEntityId = doc['host.entity.id'].value;
-} else {
+// First check if it exists in source document
+def hostEntityId = getNestedField(params._source, 'host.entity.id');
+if (!isValid(hostEntityId)) {
   def hostId = doc.containsKey('host.id') && doc['host.id'].size() > 0 ? doc['host.id'].value : null;
   def hostName = doc.containsKey('host.name') && doc['host.name'].size() > 0 ? doc['host.name'].value : null;
   def hostHostname = doc.containsKey('host.hostname') && doc['host.hostname'].size() > 0 ? doc['host.hostname'].value : null;
@@ -282,14 +309,29 @@ emit("");
 /**
  * Generates a Painless script for computing service.entity.id at runtime.
  * This script calculates a unique identifier for service entities using a simple fallback:
- * 1. service.entity.id (if already present)
+ * 1. service.entity.id (if already present in source document)
  * 2. service.name
  */
 export const getServiceEntityIdPainlessScript = (): string => {
   return `
-// Check if service.entity.id already exists
-if (doc.containsKey('service.entity.id') && doc['service.entity.id'].size() > 0) {
-  emit(doc['service.entity.id'].value);
+${PAINLESS_IS_VALID_HELPER}
+// Helper to safely get nested field from source
+def getNestedField(def source, String path) {
+  def parts = path.splitOnToken('.');
+  def current = source;
+  for (def part : parts) {
+    if (current == null || !(current instanceof Map)) {
+      return null;
+    }
+    current = current.get(part);
+  }
+  return current;
+}
+
+// Check if service.entity.id already exists in the source document (not runtime field)
+def existingEntityId = getNestedField(params._source, 'service.entity.id');
+if (isValid(existingEntityId)) {
+  emit(existingEntityId.toString());
   return;
 }
 if (doc.containsKey('service.name') && doc['service.name'].size() > 0) {
@@ -471,7 +513,18 @@ export const calculateScoresWithESQL = async (
         const entityIdField = getEntityIdField(entityType as EntityType);
         const entities = buckets.map(({ key }) => key[entityIdField]);
 
-        if (entities.length === 0) {
+        // Filter out undefined/null entities (can happen if runtime field computation fails)
+        const validEntities = entities.filter(
+          (entity): entity is string => entity !== undefined && entity !== null && entity !== ''
+        );
+
+        if (validEntities.length === 0) {
+          logger.debug(
+            `No valid entities found for ${entityType}. ` +
+              `Total buckets: ${buckets.length}, ` +
+              `entityIdField: ${entityIdField}, ` +
+              `bucket keys sample: ${JSON.stringify(buckets.slice(0, 3).map((b) => b.key))}`
+          );
           return Promise.resolve([
             entityType as EntityType,
             { afterKey: afterKey || {}, scores: [] },
@@ -484,6 +537,16 @@ export const calculateScoresWithESQL = async (
           ],
           upper: afterKey?.[entityIdField],
         };
+
+        // Log bounds for debugging if neither is defined
+        if (bounds.lower === undefined && bounds.upper === undefined) {
+          logger.warn(
+            `No pagination bounds found for ${entityType}. ` +
+              `entityIdField: ${entityIdField}, ` +
+              `afterKey: ${JSON.stringify(afterKey)}, ` +
+              `params.afterKeys: ${JSON.stringify(params.afterKeys)}`
+          );
+        }
 
         const query = getESQL(
           entityType as EntityType,
@@ -642,13 +705,25 @@ export const getCompositeQuery = (
     aggs: entityTypes.reduce((aggs, entityType) => {
       // Use the computed entity ID field for aggregation
       const entityIdField = getEntityIdField(entityType);
+
+      // Transform afterKeys to use the new entity ID field if needed
+      // The incoming afterKeys might be in the old format with legacy field names
+      let afterKeyForEntity = params.afterKeys[entityType];
+      if (afterKeyForEntity) {
+        const legacyField = EntityTypeToIdentifierField[entityType];
+        // If the afterKey has the legacy field but not the entity ID field, transform it
+        if (afterKeyForEntity[legacyField] && !afterKeyForEntity[entityIdField]) {
+          afterKeyForEntity = { [entityIdField]: afterKeyForEntity[legacyField] };
+        }
+      }
+
       return {
         ...aggs,
         [entityType]: {
           composite: {
             size: params.pageSize,
             sources: [{ [entityIdField]: { terms: { field: entityIdField } } }],
-            after: params.afterKeys[entityType],
+            after: afterKeyForEntity,
           },
         },
       };
@@ -672,8 +747,15 @@ export const getESQL = (
   const euidClause = generateEUID(entityType);
 
   // Build the range filter using entity ID (which is computed before this filter is applied)
-  const lower = afterKeys.lower ? `${entityIdField} > "${afterKeys.lower}"` : undefined;
-  const upper = afterKeys.upper ? `${entityIdField} <= "${afterKeys.upper}"` : undefined;
+  // Use explicit undefined/null checks to handle empty strings correctly
+  const hasLower = afterKeys.lower !== undefined && afterKeys.lower !== null;
+  const hasUpper = afterKeys.upper !== undefined && afterKeys.upper !== null;
+
+  const lower = hasLower ? `${entityIdField} > "${afterKeys.lower}"` : undefined;
+  const upper = hasUpper ? `${entityIdField} <= "${afterKeys.upper}"` : undefined;
+
+  // If neither bound is provided, we can't paginate - but we can still query if we have entity ID filter
+  // For the first page with results, upper should be provided from the composite after_key
   if (!lower && !upper) {
     throw new Error('Either lower or upper after key must be provided for pagination');
   }

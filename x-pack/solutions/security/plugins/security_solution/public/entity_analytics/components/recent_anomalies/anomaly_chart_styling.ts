@@ -5,17 +5,26 @@
  * 2.0.
  */
 
-export const padChartStyling = {
-  heightOfNoResults: 300,
-  heightOfXAxisLegend: 28,
-  heightOfTopLegend: 32,
-  heightOfEachCell: 40,
-  heightOfUserNamesList: (userNames: string[]) =>
-    userNames.length > 0
-      ? userNames.length * padChartStyling.heightOfEachCell
-      : padChartStyling.heightOfNoResults,
-  heightOfHeatmap: (userNames: string[]) =>
-    userNames.length > 0
-      ? userNames.length * padChartStyling.heightOfEachCell + padChartStyling.heightOfXAxisLegend
-      : padChartStyling.heightOfNoResults,
+const CELL_HEIGHT_DEFAULT = 40;
+const CELL_HEIGHT_COMPRESSED = 28;
+const HEIGHT_OF_NO_RESULTS = 300;
+const HEIGHT_OF_X_AXIS_LEGEND = 28;
+const HEIGHT_OF_TOP_LEGEND = 32;
+
+export const getAnomalyChartStyling = (compressed: boolean = false) => {
+  const heightOfEachCell = compressed ? CELL_HEIGHT_COMPRESSED : CELL_HEIGHT_DEFAULT;
+  return {
+    heightOfNoResults: HEIGHT_OF_NO_RESULTS,
+    heightOfXAxisLegend: HEIGHT_OF_X_AXIS_LEGEND,
+    heightOfTopLegend: HEIGHT_OF_TOP_LEGEND,
+    heightOfEachCell,
+    heightOfEntityNamesList: (entityNames: string[]) =>
+      entityNames.length > 0 ? entityNames.length * heightOfEachCell : HEIGHT_OF_NO_RESULTS,
+    heightOfHeatmap: (entityNames: string[]) =>
+      entityNames.length > 0
+        ? entityNames.length * heightOfEachCell + HEIGHT_OF_X_AXIS_LEGEND
+        : HEIGHT_OF_NO_RESULTS,
+  };
 };
+
+export const anomalyChartStyling = getAnomalyChartStyling(false);
